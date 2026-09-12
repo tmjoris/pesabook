@@ -50,6 +50,37 @@ public class LedgerService {
     }
 
     /**
+     * The account representing everything outside this ledger.
+     *
+     * Money has to enter the system from somewhere. In double entry it cannot
+     * simply appear, so a deposit is a movement from an account standing for
+     * the outside world. That account runs negative by design, and its balance
+     * read back is how much this ledger currently owes outward.
+     */
+    public static final String EXTERNAL_ACCOUNT_REFERENCE = "external:settlement";
+
+    @Transactional
+    public Account externalAccount(String currency) {
+        String reference = EXTERNAL_ACCOUNT_REFERENCE + ":" + currency;
+        return accounts.findByReference(reference)
+                .orElseGet(() -> accounts.save(new Account(reference, currency)));
+    }
+
+    /**
+     * Brings money into the ledger from outside.
+     *
+     * The balance check is skipped for the external side only, because that
+     * account is supposed to go negative. Every other movement still has to be
+     * funded.
+     */
+    @Transactional
+    public Transfer fundFromExternal(UUID target, long amountMinor, String currency) {
+        Account external = externalAccount(currency);
+        return postWithoutBalanceCheck(external.getId(), target, amountMinor,
+                currency, RiskDecision.ALLOW, null);
+    }
+
+    /**
      * Records a transfer the risk check refused. No entries are written, so no
      * money moves, but the attempt is kept because a blocked attempt is exactly
      * the thing an investigator wants to see later.
@@ -77,6 +108,21 @@ public class LedgerService {
     public Transfer post(UUID source, UUID target, long amountMinor,
                          String currency, RiskDecision decision, UUID reverses) {
 
+        // An ordinary movement has to be funded. A reversal does not, because
+        // refusing one would leave money where it does not belong.
+        boolean requireFunds = reverses == null;
+        return write(source, target, amountMinor, currency, decision, reverses, requireFunds);
+    }
+
+    private Transfer postWithoutBalanceCheck(UUID source, UUID target, long amountMinor,
+                                             String currency, RiskDecision decision,
+                                             UUID reverses) {
+        return write(source, target, amountMinor, currency, decision, reverses, false);
+    }
+
+    private Transfer write(UUID source, UUID target, long amountMinor, String currency,
+                           RiskDecision decision, UUID reverses, boolean requireFunds) {
+
         if (amountMinor <= 0) {
             throw new LedgerException("A transfer must move a positive amount");
         }
@@ -92,10 +138,7 @@ public class LedgerService {
                     "Both accounts must hold the transfer currency " + currency);
         }
 
-        // A reversal is allowed to take an account negative, because refusing it
-        // would leave money somewhere it does not belong. An ordinary transfer
-        // is not.
-        if (reverses == null && balanceOf(source) < amountMinor) {
+        if (requireFunds && balanceOf(source) < amountMinor) {
             throw new LedgerException("Account " + from.getReference()
                     + " does not hold enough to move " + amountMinor);
         }

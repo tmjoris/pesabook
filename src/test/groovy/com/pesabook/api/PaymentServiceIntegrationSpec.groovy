@@ -39,9 +39,8 @@ class PaymentServiceIntegrationSpec extends ContainerSpec {
     }
 
     private Account funded(String reference, long amount) {
-        def float_ = account(reference + '-float')
         def target = account(reference)
-        ledger.post(float_.id, target.id, amount, 'KES', RiskDecision.ALLOW, UUID.randomUUID())
+        ledger.fundFromExternal(target.id, amount, 'KES')
         target
     }
 

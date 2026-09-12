@@ -15,6 +15,22 @@ public interface TransferRepository extends JpaRepository<Transfer, UUID> {
 
     boolean existsByReverses(UUID reverses);
 
+    /**
+     * Counts every attempt, not only the ones that were posted.
+     *
+     * A sender who keeps trying after being held or blocked is a stronger
+     * signal than one who stops, so counting only successes would let a
+     * determined attacker sit just under the threshold forever.
+     */
+    @Query("""
+            select count(t) from Transfer t
+            where t.sourceAccount = :accountId
+              and t.createdAt >= :since
+              and t.reverses is null
+            """)
+    long countAttemptsFromAccountSince(@Param("accountId") UUID accountId,
+                                       @Param("since") Instant since);
+
     @Query("""
             select count(t) from Transfer t
             where t.sourceAccount = :accountId

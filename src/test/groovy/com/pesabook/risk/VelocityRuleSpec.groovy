@@ -19,29 +19,37 @@ class VelocityRuleSpec extends Specification {
 
     def "allows an account that has been quiet"() {
         given:
-        transfers.countPostedFromAccountSince(_, _) >> 0
+        transfers.countAttemptsFromAccountSince(_, _) >> 0
 
         expect:
         rule.evaluate(context()).decision() == RiskDecision.ALLOW
     }
 
-    def "counts the attempt being judged, not just the ones already posted"() {
-        given: "four already posted, so this one would be the fifth"
-        transfers.countPostedFromAccountSince(_, _) >> 4
+    def "counts the attempt being judged, not just the ones already made"() {
+        given: "four attempts already, so this one would be the fifth"
+        transfers.countAttemptsFromAccountSince(_, _) >> 4
 
         expect: "the review threshold of five is reached by the attempt itself"
         rule.evaluate(context()).decision() == RiskDecision.REVIEW
     }
 
+    def "counts refused attempts too, not only posted ones"() {
+        given: "an account whose recent attempts were all held or blocked"
+        transfers.countAttemptsFromAccountSince(_, _) >> 9
+
+        expect: "someone who keeps trying after being refused is a stronger signal, not a weaker one"
+        rule.evaluate(context()).decision() == RiskDecision.BLOCK
+    }
+
     def "escalates from review to block as the burst grows"() {
         given:
-        transfers.countPostedFromAccountSince(_, _) >> alreadyPosted
+        transfers.countAttemptsFromAccountSince(_, _) >> priorAttempts
 
         expect:
         rule.evaluate(context()).decision() == expected
 
         where:
-        alreadyPosted || expected
+        priorAttempts || expected
         0             || RiskDecision.ALLOW
         3             || RiskDecision.ALLOW
         4             || RiskDecision.REVIEW
@@ -53,7 +61,7 @@ class VelocityRuleSpec extends Specification {
     def "looks only at the configured window"() {
         given:
         Instant asked = null
-        transfers.countPostedFromAccountSince(_, _) >> { args -> asked = args[1]; 0 }
+        transfers.countAttemptsFromAccountSince(_, _) >> { args -> asked = args[1]; 0 }
 
         when:
         rule.evaluate(context())
@@ -65,7 +73,7 @@ class VelocityRuleSpec extends Specification {
 
     def "explains itself when it objects"() {
         given:
-        transfers.countPostedFromAccountSince(_, _) >> 9
+        transfers.countAttemptsFromAccountSince(_, _) >> 9
 
         when:
         def signal = rule.evaluate(context())

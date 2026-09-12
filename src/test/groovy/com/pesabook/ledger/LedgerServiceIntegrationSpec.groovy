@@ -26,11 +26,8 @@ class LedgerServiceIntegrationSpec extends ContainerSpec {
     }
 
     private Account funded(String reference, long amount) {
-        // Money enters the system from a funding account, which is allowed to
-        // go negative the way a real one representing an external float would.
-        def source = account(reference + '-float')
         def target = account(reference)
-        ledger.post(source.id, target.id, amount, 'KES', RiskDecision.ALLOW, UUID.randomUUID())
+        ledger.fundFromExternal(target.id, amount, 'KES')
         target
     }
 

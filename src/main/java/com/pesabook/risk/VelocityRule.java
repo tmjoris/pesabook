@@ -39,7 +39,7 @@ public class VelocityRule implements RiskRule {
     @Override
     public RiskSignal evaluate(RiskContext context) {
         Instant since = Instant.now().minus(window);
-        long recent = transfers.countPostedFromAccountSince(context.sourceAccount(), since);
+        long recent = transfers.countAttemptsFromAccountSince(context.sourceAccount(), since);
 
         // The count excludes the attempt being judged, so compare the count
         // this one would make.

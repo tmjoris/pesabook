@@ -4,7 +4,7 @@
 create table account (
     id            uuid primary key,
     reference     varchar(64)  not null unique,
-    currency      char(3)      not null,
+    currency      varchar(3)   not null,
     created_at    timestamptz  not null default now()
 );
 
@@ -13,7 +13,7 @@ create table transfer (
     source_account   uuid         not null references account (id),
     target_account   uuid         not null references account (id),
     amount_minor     bigint       not null,
-    currency         char(3)      not null,
+    currency         varchar(3)   not null,
     status           varchar(16)  not null,
     risk_decision    varchar(16)  not null,
     reverses         uuid         null references transfer (id),
@@ -39,7 +39,7 @@ create table ledger_entry (
     account_id    uuid         not null references account (id),
     direction     varchar(6)   not null,
     amount_minor  bigint       not null,
-    currency      char(3)      not null,
+    currency      varchar(3)   not null,
     created_at    timestamptz  not null default now(),
 
     constraint entry_amount_positive check (amount_minor > 0),
