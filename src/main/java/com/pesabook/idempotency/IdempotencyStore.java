@@ -1,6 +1,5 @@
 package com.pesabook.idempotency;
 
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,21 +26,22 @@ public class IdempotencyStore {
     }
 
     /**
-     * Attempts to claim the key by inserting a row.
+     * Attempts to claim the key.
      *
      * @return empty when this caller won the claim, or the existing record when
      *         someone else already holds it
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<IdempotencyRecord> tryClaim(String key, String fingerprint) {
-        try {
-            records.saveAndFlush(new IdempotencyRecord(key, fingerprint));
+        int inserted = records.insertIfAbsent(key, fingerprint);
+
+        if (inserted == 1) {
             return Optional.empty();
-        } catch (DataIntegrityViolationException e) {
-            return Optional.of(records.findById(key)
-                    .orElseThrow(() -> new IllegalStateException(
-                            "Key " + key + " was taken and then vanished", e)));
         }
+
+        return Optional.of(records.findById(key)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Key " + key + " was taken and then vanished")));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

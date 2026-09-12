@@ -16,10 +16,7 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import org.springframework.http.MediaType
 
-import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 /**
  * The case the whole project exists for.
@@ -75,39 +72,44 @@ class IdempotencyConcurrencySpec extends ContainerSpec {
         def key = 'retry-' + UUID.randomUUID()
         def body = objectMapper.writeValueAsString(
                 new TransferRequest(alice.id, bob.id, 2_500, 'KES'))
+        def url = "http://localhost:${port}/v1/transfers"
 
         def attempts = 20
-        def pool = Executors.newFixedThreadPool(attempts)
         def startTogether = new CountDownLatch(1)
+        def responses = Collections.synchronizedList([])
+        def threads = []
 
         when: "every thread fires the same request at the same moment"
-        def tasks = (1..attempts).collect { i ->
-            { ->
+        attempts.times {
+            def t = new Thread({
                 startTogether.await()
-                rest.exchange("http://localhost:${port}/v1/transfers", HttpMethod.POST,
-                        request(body, key), String)
-            } as Callable
+                responses << rest.exchange(url, HttpMethod.POST, request(body, key), String)
+            })
+            threads << t
+            t.start()
         }
-        def futures = tasks.collect { pool.submit(it) }
         startTogether.countDown()
-        def responses = futures.collect { it.get(60, TimeUnit.SECONDS) }
-        pool.shutdown()
+        threads.each { it.join(60_000) }
 
-        then: "exactly one attempt did the work"
-        def created = responses.findAll { it.statusCode.value() == 201 && it.headers.getFirst('Idempotent-Replay') == 'false' }
-        created.size() == 1
+        then: "every attempt came back with something"
+        responses.size() == attempts
 
-        and: "every other attempt was either replayed or told to wait, never a second charge"
-        responses.every {
-            it.statusCode.value() == 201 || it.statusCode.value() == 409
-        }
+        and: "exactly one attempt did the work"
+        responses.count {
+            it.statusCode.value() == 201 && it.headers.getFirst('Idempotent-Replay') == 'false'
+        } == 1
+
+        and: "every other attempt was replayed or told to wait, never a second charge"
+        responses.every { it.statusCode.value() == 201 || it.statusCode.value() == 409 }
 
         and: "and the money moved exactly once"
         ledger.balanceOf(alice.id) == 97_500
         ledger.balanceOf(bob.id) == 2_500
 
-        and: "one transfer, two entries, ledger still balanced"
-        transfers.findAll().count { it.sourceAccount == alice.id && it.targetAccount == bob.id } == 1
+        and: "one transfer, and the ledger still balances"
+        transfers.findAll().count {
+            it.sourceAccount == alice.id && it.targetAccount == bob.id
+        } == 1
         ledger.totalOfAllEntries() == 0
     }
 
@@ -187,22 +189,25 @@ class IdempotencyConcurrencySpec extends ContainerSpec {
         def url = "http://localhost:${port}/v1/transfers/${original.id}/reversals"
 
         def attempts = 8
-        def pool = Executors.newFixedThreadPool(attempts)
         def startTogether = new CountDownLatch(1)
+        def responses = Collections.synchronizedList([])
+        def threads = []
 
         when: "several operators hit reverse at once, each with their own key"
-        def futures = (1..attempts).collect { i ->
-            pool.submit({ ->
+        attempts.times {
+            def t = new Thread({
                 startTogether.await()
-                rest.exchange(url, HttpMethod.POST,
+                responses << rest.exchange(url, HttpMethod.POST,
                         request('', 'reversal-' + UUID.randomUUID()), String)
-            } as Callable)
+            })
+            threads << t
+            t.start()
         }
         startTogether.countDown()
-        def responses = futures.collect { it.get(60, TimeUnit.SECONDS) }
-        pool.shutdown()
+        threads.each { it.join(60_000) }
 
         then: "the unique constraint on reverses lets exactly one through"
+        responses.size() == attempts
         responses.count { it.statusCode.value() == 201 } == 1
 
         and: "the losers are told the state conflicts, not that the server broke"
