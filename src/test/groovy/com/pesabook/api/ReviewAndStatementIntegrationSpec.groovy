@@ -157,7 +157,13 @@ class ReviewAndStatementIntegrationSpec extends ContainerSpec {
         def held = payments.transfer(heldTransfer(alice, bob))
 
         and: "and the sender spends the money while it sits in the queue"
-        payments.transfer(new TransferRequest(alice.id, carol.id, 4_500_000, 'KES'))
+        // Posted straight through the ledger rather than through the risk
+        // check, because this is setting up the state the reviewer arrives
+        // into, not exercising the rules.
+        ledger.post(alice.id, carol.id, 4_500_000, 'KES', RiskDecision.ALLOW)
+
+        expect: "the account can no longer cover the held amount"
+        ledger.balanceOf(alice.id) == 500_000
 
         when: "a reviewer approves it later"
         payments.decide(held.id(), new DecisionRequest('APPROVE', 'looks fine'))
