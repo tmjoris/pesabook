@@ -1,5 +1,7 @@
 # pesabook
 
+[![CI](https://github.com/tmjoris/pesabook/actions/workflows/ci.yml/badge.svg)](https://github.com/tmjoris/pesabook/actions/workflows/ci.yml)
+
 A payments service that can be retried safely, keeps a ledger that can be
 audited, undoes a mistake without pretending it never happened, and decides
 whether a payment looks wrong before the money moves.
@@ -215,6 +217,27 @@ The spec worth reading first is `IdempotencyConcurrencySpec`. It fires twenty
 simultaneous copies of one request at a running server and asserts that exactly
 one did the work, that every other attempt was replayed or told to wait, that
 the balance moved once, and that the ledger still sums to zero.
+
+97 specs pass. 74 of them need no Docker.
+
+### One bug worth recording
+
+The idempotency claim originally called `save()`. Every unit spec passed,
+because a mocked store cannot exhibit the problem. The first run against a real
+PostgreSQL failed immediately.
+
+Spring Data decides whether `save()` should insert or merge by asking whether
+the entity looks new, and an entity whose id the application assigns never looks
+new. So `save()` issued a select followed by an update. The second request
+quietly overwrote the first request's record, no constraint was violated, no
+exception was thrown, and the work ran twice. That is exactly the double charge
+the key exists to prevent, arriving through the mechanism meant to stop it.
+
+The claim is now a single `insert ... on conflict do nothing`, whose return
+value says plainly whether this caller won. The lesson is narrower than "write
+integration tests": a mock of a database cannot tell you how that database
+behaves, and for the one invariant a system exists to hold, the test has to run
+against the real thing.
 
 ## Known gaps
 
