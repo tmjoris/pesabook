@@ -15,6 +15,11 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, UUID> 
     List<LedgerEntry> findByAccountIdOrderByCreatedAtDesc(UUID accountId);
 
     /**
+     * Oldest first, which is the order a running balance has to be built in.
+     */
+    List<LedgerEntry> findByAccountIdOrderByCreatedAtAscIdAsc(UUID accountId);
+
+    /**
      * Used by the invariant check. Across the whole ledger this has to be zero,
      * because every transfer posts a balanced pair.
      */

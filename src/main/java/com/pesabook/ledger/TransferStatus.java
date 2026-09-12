@@ -9,5 +9,8 @@ public enum TransferStatus {
     HELD_FOR_REVIEW,
 
     /** The risk check refused it, so no entries were posted. */
-    BLOCKED
+    BLOCKED,
+
+    /** A reviewer looked at a held transfer and refused it. */
+    REFUSED
 }

@@ -208,6 +208,81 @@ public class LedgerService {
         return entries.findByTransferId(transferId);
     }
 
+    @Transactional(readOnly = true)
+    public Transfer requireTransfer(UUID transferId) {
+        return transfers.findById(transferId)
+                .orElseThrow(() -> new LedgerException("No transfer with id " + transferId));
+    }
+
+    /**
+     * An account's entries oldest first, which is the order a statement reads
+     * in and the only order a running balance makes sense in.
+     */
+    @Transactional(readOnly = true)
+    public List<LedgerEntry> statementFor(UUID accountId) {
+        requireAccount(accountId);
+        return entries.findByAccountIdOrderByCreatedAtAscIdAsc(accountId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Transfer> awaitingReview() {
+        return transfers.findByStatusOrderByCreatedAtDesc(TransferStatus.HELD_FOR_REVIEW);
+    }
+
+    /**
+     * Lets a held transfer through after a reviewer has looked at it.
+     *
+     * The funds are checked again here rather than trusted from when the hold
+     * was placed. Time has passed, and the sender may have spent the money in
+     * the meantime, so approving without rechecking would post a movement the
+     * account can no longer cover.
+     */
+    @Transactional
+    public Transfer release(UUID transferId, String reason) {
+        Transfer held = requireTransfer(transferId);
+
+        if (!held.isAwaitingReview()) {
+            throw new LedgerException("Only a transfer awaiting review can be released, this one is "
+                    + held.getStatus());
+        }
+
+        if (balanceOf(held.getSourceAccount()) < held.getAmountMinor()) {
+            throw new LedgerException("The sending account no longer holds enough to move "
+                    + held.getAmountMinor());
+        }
+
+        List<LedgerEntry> pair = List.of(
+                new LedgerEntry(held.getId(), held.getSourceAccount(), Direction.DEBIT,
+                        held.getAmountMinor(), held.getCurrency()),
+                new LedgerEntry(held.getId(), held.getTargetAccount(), Direction.CREDIT,
+                        held.getAmountMinor(), held.getCurrency()));
+
+        if (pair.stream().mapToLong(LedgerEntry::signedAmount).sum() != 0) {
+            throw new LedgerException("Entries for a released transfer must sum to zero");
+        }
+
+        entries.saveAll(pair);
+        held.markReleased(reason);
+        return transfers.save(held);
+    }
+
+    /**
+     * Records that a reviewer refused a held transfer. No entries are written,
+     * and the attempt stays in the history with the reason attached.
+     */
+    @Transactional
+    public Transfer refuse(UUID transferId, String reason) {
+        Transfer held = requireTransfer(transferId);
+
+        if (!held.isAwaitingReview()) {
+            throw new LedgerException("Only a transfer awaiting review can be refused, this one is "
+                    + held.getStatus());
+        }
+
+        held.markRefused(reason);
+        return transfers.save(held);
+    }
+
     /**
      * Every entry ever written, summed. Because each transfer posts a debit and
      * an equal credit, the total across a healthy ledger is zero, whatever has

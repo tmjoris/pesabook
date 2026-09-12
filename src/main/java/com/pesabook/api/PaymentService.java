@@ -1,7 +1,12 @@
 package com.pesabook.api;
 
+import com.pesabook.api.dto.DecisionRequest;
+import com.pesabook.api.dto.LedgerEntryResponse;
+import com.pesabook.api.dto.StatementResponse;
 import com.pesabook.api.dto.TransferRequest;
 import com.pesabook.api.dto.TransferResponse;
+import com.pesabook.ledger.Account;
+import com.pesabook.ledger.LedgerEntry;
 import com.pesabook.ledger.LedgerService;
 import com.pesabook.ledger.Transfer;
 import com.pesabook.ledger.TransferStatus;
@@ -12,6 +17,8 @@ import com.pesabook.risk.RiskEngine;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -67,5 +74,49 @@ public class PaymentService {
     public TransferResponse reverse(UUID transferId) {
         Transfer reversal = ledger.reverse(transferId);
         return TransferResponse.of(reversal, null);
+    }
+
+    @Transactional(readOnly = true)
+    public TransferResponse get(UUID transferId) {
+        return TransferResponse.of(ledger.requireTransfer(transferId), null);
+    }
+
+    @Transactional(readOnly = true)
+    public List<TransferResponse> awaitingReview() {
+        return ledger.awaitingReview().stream()
+                .map(t -> TransferResponse.of(t, null))
+                .toList();
+    }
+
+    /**
+     * Applies a reviewer's verdict to a held transfer.
+     *
+     * Approving posts the entries that were withheld, after rechecking the
+     * funds, because the hold may have sat in a queue while the sender spent
+     * the money.
+     */
+    @Transactional
+    public TransferResponse decide(UUID transferId, DecisionRequest decision) {
+        Transfer resolved = decision.isApproval()
+                ? ledger.release(transferId, decision.reason())
+                : ledger.refuse(transferId, decision.reason());
+        return TransferResponse.of(resolved, null);
+    }
+
+    @Transactional(readOnly = true)
+    public StatementResponse statement(UUID accountId) {
+        Account account = ledger.requireAccount(accountId);
+        List<LedgerEntry> entries = ledger.statementFor(accountId);
+
+        List<StatementResponse.StatementLine> lines = new ArrayList<>(entries.size());
+        long running = 0;
+        for (LedgerEntry entry : entries) {
+            running += entry.signedAmount();
+            lines.add(new StatementResponse.StatementLine(
+                    LedgerEntryResponse.of(entry), running));
+        }
+
+        return new StatementResponse(account.getId(), account.getReference(),
+                account.getCurrency(), running, lines);
     }
 }

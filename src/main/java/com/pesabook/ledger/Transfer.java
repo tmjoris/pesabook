@@ -50,6 +50,12 @@ public class Transfer {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(name = "reviewed_at")
+    private Instant reviewedAt;
+
+    @Column(name = "review_reason", length = 500)
+    private String reviewReason;
+
     protected Transfer() {
     }
 
@@ -69,6 +75,28 @@ public class Transfer {
 
     public boolean isReversal() {
         return reverses != null;
+    }
+
+    public boolean isAwaitingReview() {
+        return status == TransferStatus.HELD_FOR_REVIEW;
+    }
+
+    /**
+     * Records that a reviewer let a held transfer through.
+     *
+     * Named for the transition rather than exposing a status setter, so the
+     * only ways a transfer can change state are the ones written here.
+     */
+    void markReleased(String reason) {
+        this.status = TransferStatus.POSTED;
+        this.reviewedAt = Instant.now();
+        this.reviewReason = reason;
+    }
+
+    void markRefused(String reason) {
+        this.status = TransferStatus.REFUSED;
+        this.reviewedAt = Instant.now();
+        this.reviewReason = reason;
     }
 
     public UUID getId() {
@@ -105,5 +133,13 @@ public class Transfer {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Instant getReviewedAt() {
+        return reviewedAt;
+    }
+
+    public String getReviewReason() {
+        return reviewReason;
     }
 }

@@ -74,6 +74,16 @@ pilot caught **54 percent of fraudulent transactions the banks' own systems had
 missed**, and EBA CLEARING's network level detection produced about a 35 percent
 fall in fraud for early adopters on SEPA.
 
+Those figures say the category of control works. They are not a claim about this
+code, and the distinction matters enough to spell out. Confirmation of Payee
+compares the recipient's **name** against the account before the payment leaves,
+so the sender is told "that account belongs to John Kamau, not Jane Kamau". What
+is implemented here is a `new-recipient` rule that flags a large first payment to
+a party never paid before. That is a weaker control aimed at the same failure,
+and the 53 percent does not transfer to it. A real payee check needs a name to
+verify against, which means either a directory this service does not have or a
+lookup against the rail it would sit in front of.
+
 The idempotency half is settled practice rather than invention. Stripe applies a
 key to every POST, stores the first response per key and replays it on retry,
 including the 500s, and rejects a key that returns with different parameters.
@@ -91,6 +101,13 @@ M-PESA or for Kenyan mobile money. I looked across regulator publications,
 CGAP, GSMA, FinAccess and several search engines, and did not find one. The
 argument above stands on what is measured: misdirected payments, downtime,
 volume, and a result code the operator saw fit to define.
+
+There is also a limit to what the duplicate half can do on its own. A retry is
+recognised because the client sends the same key twice. A client that generates
+a fresh key for every attempt will be charged twice and this service cannot tell
+the difference, because from the outside those are two different instructions.
+What is implemented here is the server half of a contract with two sides. The
+header is mandatory rather than optional so the other half has to exist.
 
 CGAP is also blunt that these controls cost something. Delays frustrate people,
 payee verification produces warning fatigue, and aggressive checks exclude
@@ -178,6 +195,28 @@ A transfer that is held or blocked writes no entries, so no balance moves, but
 the attempt is still recorded with the reasons attached. A refused attempt is
 one of the more useful things in a history.
 
+## The API
+
+| Method | Path | Idempotent | Purpose |
+| --- | --- | --- | --- |
+| POST | `/v1/accounts` | no | open an account |
+| GET | `/v1/accounts/{id}` | | the account and its balance |
+| GET | `/v1/accounts/{id}/statement` | | every entry with a running balance |
+| POST | `/v1/transfers` | yes | send money |
+| GET | `/v1/transfers/{id}` | | one transfer and its status |
+| GET | `/v1/transfers?status=HELD_FOR_REVIEW` | | the review queue |
+| POST | `/v1/transfers/{id}/decision` | yes | approve or refuse a held transfer |
+| POST | `/v1/transfers/{id}/reversals` | yes | undo a posted transfer |
+| GET | `/actuator/health` | | liveness and readiness |
+
+The statement endpoint is what makes the append only ledger useful to a person
+rather than only to the code. Its closing balance is computed by summing the
+same entries the account balance is summed from, so the two cannot disagree.
+
+Approving a held transfer rechecks the funds rather than trusting the check from
+when the hold was placed. Time passes while something sits in a queue, and the
+sender may have spent the money in between. A spec covers exactly that.
+
 ## Running it
 
 ```
@@ -243,19 +282,24 @@ against the real thing.
 
 There is no authentication. Every endpoint is open, which is fine for something
 demonstrating ledger and idempotency behaviour and would not be fine anywhere
-else.
+else. In particular the decision endpoint should know which reviewer made a
+call, and right now it only records their reason.
 
 Idempotency records are never pruned. Stripe expires keys after 24 hours; this
 keeps them forever, so the table grows without bound.
 
-A held transfer has no release path. Something is recorded as awaiting review
-and there is no endpoint for a reviewer to approve or refuse it.
+The review queue is unpaginated and unfiltered beyond status. That is fine for a
+queue of tens and wrong for a queue of thousands.
 
 Redis is configured and connected but is not yet load bearing. The claim on a
 key is held in PostgreSQL, which is correct and durable, and a Redis lock in
 front of it would shorten the window in which a losing caller waits. It is wired
 up rather than used, and pretending otherwise would be the kind of claim this
 README is trying to avoid.
+
+The risk thresholds are reasoned rather than fitted. They are configurable
+because the right values depend on the corridor and cannot be derived from
+first principles, and nothing here has been tuned against real fraud data.
 
 ## Sources
 

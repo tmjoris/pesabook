@@ -15,6 +15,8 @@ public interface TransferRepository extends JpaRepository<Transfer, UUID> {
 
     boolean existsByReverses(UUID reverses);
 
+    List<Transfer> findByStatusOrderByCreatedAtDesc(TransferStatus status);
+
     /**
      * Counts every attempt, not only the ones that were posted.
      *

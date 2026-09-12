@@ -2,6 +2,7 @@ package com.pesabook.api;
 
 import com.pesabook.api.dto.AccountResponse;
 import com.pesabook.api.dto.OpenAccountRequest;
+import com.pesabook.api.dto.StatementResponse;
 import com.pesabook.ledger.Account;
 import com.pesabook.ledger.LedgerService;
 import jakarta.validation.Valid;
@@ -21,9 +22,11 @@ import java.util.UUID;
 public class AccountController {
 
     private final LedgerService ledger;
+    private final PaymentService payments;
 
-    public AccountController(LedgerService ledger) {
+    public AccountController(LedgerService ledger, PaymentService payments) {
         this.ledger = ledger;
+        this.payments = payments;
     }
 
     @PostMapping
@@ -37,5 +40,16 @@ public class AccountController {
     public ResponseEntity<AccountResponse> get(@PathVariable UUID id) {
         Account account = ledger.requireAccount(id);
         return ResponseEntity.ok(AccountResponse.of(account, ledger.balanceOf(id)));
+    }
+
+    /**
+     * The account's entries with a running balance.
+     *
+     * This is what makes the append only ledger useful to a reader rather than
+     * only to the code. Without it the history exists but nobody can see it.
+     */
+    @GetMapping("/{id}/statement")
+    public ResponseEntity<StatementResponse> statement(@PathVariable UUID id) {
+        return ResponseEntity.ok(payments.statement(id));
     }
 }
