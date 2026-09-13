@@ -130,6 +130,15 @@ first and inserting afterwards leaves a window where both callers believe they
 are first, and that window is exactly where a retry over a slow mobile network
 lands.
 
+The insert is written as `insert ... on conflict do nothing` rather than through
+`save()`. Spring Data decides between insert and merge by asking whether the
+entity looks new, and an entity whose id the application assigns never looks
+new, so `save()` issues a select followed by an update and quietly overwrites
+the record belonging to whoever arrived first. That is the double charge the key
+exists to prevent, arriving through the mechanism meant to stop it. A mocked
+repository cannot exhibit it, which is why the claim is covered against a real
+PostgreSQL rather than a stand in.
+
 What a caller gets back:
 
 | Situation | Response |
@@ -257,26 +266,7 @@ simultaneous copies of one request at a running server and asserts that exactly
 one did the work, that every other attempt was replayed or told to wait, that
 the balance moved once, and that the ledger still sums to zero.
 
-97 specs pass. 74 of them need no Docker.
-
-### One bug worth recording
-
-The idempotency claim originally called `save()`. Every unit spec passed,
-because a mocked store cannot exhibit the problem. The first run against a real
-PostgreSQL failed immediately.
-
-Spring Data decides whether `save()` should insert or merge by asking whether
-the entity looks new, and an entity whose id the application assigns never looks
-new. So `save()` issued a select followed by an update. The second request
-quietly overwrote the first request's record, no constraint was violated, no
-exception was thrown, and the work ran twice. That is exactly the double charge
-the key exists to prevent, arriving through the mechanism meant to stop it.
-
-The claim is now a single `insert ... on conflict do nothing`, whose return
-value says plainly whether this caller won. The lesson is narrower than "write
-integration tests": a mock of a database cannot tell you how that database
-behaves, and for the one invariant a system exists to hold, the test has to run
-against the real thing.
+108 specs pass. 74 of them need no Docker.
 
 ## Known gaps
 
