@@ -119,4 +119,17 @@ public class PaymentService {
         return new StatementResponse(account.getId(), account.getReference(),
                 account.getCurrency(), running, lines);
     }
+
+    /**
+     * Brings money into the ledger so there is something to move.
+     *
+     * The risk rules do not run here. This represents a deposit arriving from
+     * outside the service rather than one customer paying another, and the
+     * interesting question for a deposit is reconciliation, not fraud scoring.
+     */
+    @Transactional
+    public TransferResponse fund(UUID accountId, long amountMinor, String currency) {
+        Transfer funded = ledger.fundFromExternal(accountId, amountMinor, currency);
+        return TransferResponse.of(funded, null);
+    }
 }

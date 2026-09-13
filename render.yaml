@@ -1,0 +1,32 @@
+# Render blueprint for pesabook.
+#
+# The database is not declared here. It lives on Neon, because Render deletes a
+# free PostgreSQL instance thirty days after it is created. DATABASE_URL is set
+# on the service to Neon's connection string, and the application converts that
+# postgres:// URI into the JDBC form the driver expects.
+
+services:
+  - type: web
+    name: pesabook
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      # Set manually rather than linked, so no credential lands in version
+      # control.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        sync: false
+
+  - type: keyvalue
+    name: pesabook-cache
+    plan: free
+    # Redis holds only the in flight marker for an idempotency key, which is
+    # rebuilt on demand and expires on its own, so evicting the oldest key when
+    # memory runs out costs nothing.
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []

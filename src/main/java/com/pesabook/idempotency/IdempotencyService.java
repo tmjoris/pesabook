@@ -26,10 +26,14 @@ import java.util.function.Supplier;
 public class IdempotencyService {
 
     private final IdempotencyStore store;
+    private final IdempotencyGate gate;
     private final RequestFingerprint fingerprints;
 
-    public IdempotencyService(IdempotencyStore store, RequestFingerprint fingerprints) {
+    public IdempotencyService(IdempotencyStore store,
+                              IdempotencyGate gate,
+                              RequestFingerprint fingerprints) {
         this.store = store;
+        this.gate = gate;
         this.fingerprints = fingerprints;
     }
 
@@ -47,9 +51,31 @@ public class IdempotencyService {
         }
 
         String fingerprint = fingerprints.of(requestBody);
-        Optional<IdempotencyRecord> existing = store.tryClaim(key, fingerprint);
+
+        // Redis turns away a retry that arrives while the first attempt is still
+        // running, without spending a database round trip on it. It is only ever
+        // a fast path: a caller it lets through still has to win the insert
+        // below, and if Redis is down it lets everyone through.
+        if (!gate.tryAcquire(key)) {
+            Optional<IdempotencyRecord> existing = store.find(key);
+            if (existing.isPresent()) {
+                return replayOrRefuse(existing.get(), fingerprint);
+            }
+            throw new IdempotencyInProgressException(key);
+        }
+
+        Optional<IdempotencyRecord> existing;
+        try {
+            existing = store.tryClaim(key, fingerprint);
+        } catch (RuntimeException e) {
+            gate.release(key);
+            throw e;
+        }
 
         if (existing.isPresent()) {
+            // Someone else already owns the durable claim, so this caller never
+            // had the right to the marker it just took.
+            gate.release(key);
             return replayOrRefuse(existing.get(), fingerprint);
         }
 
@@ -60,10 +86,12 @@ public class IdempotencyService {
             // Release the claim so the caller can retry. Holding it would turn a
             // transient failure into a permanent refusal.
             store.release(key);
+            gate.release(key);
             throw e;
         }
 
         store.complete(key, result);
+        gate.release(key);
         return new IdempotentOutcome(false, result.httpStatus(), result.body());
     }
 
