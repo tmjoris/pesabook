@@ -186,7 +186,6 @@ sitting where it does not belong because the recipient had already spent it.
 ### Risk
 
 Three rules run before anything is written, and the strictest answer wins.
-
 **Velocity** counts recent transfers from the sending account. A compromised
 account tends to be drained quickly, so a burst is worth attention even when
 each payment looks ordinary alone.
@@ -210,6 +209,7 @@ one of the more useful things in a history.
 | --- | --- | --- | --- |
 | POST | `/v1/accounts` | no | open an account |
 | GET | `/v1/accounts/{id}` | | the account and its balance |
+| POST | `/v1/accounts/{id}/funding` | yes | bring money in from outside the ledger |
 | GET | `/v1/accounts/{id}/statement` | | every entry with a running balance |
 | POST | `/v1/transfers` | yes | send money |
 | GET | `/v1/transfers/{id}` | | one transfer and its status |
@@ -217,6 +217,7 @@ one of the more useful things in a history.
 | POST | `/v1/transfers/{id}/decision` | yes | approve or refuse a held transfer |
 | POST | `/v1/transfers/{id}/reversals` | yes | undo a posted transfer |
 | GET | `/actuator/health` | | liveness and readiness |
+| GET | `/docs` | | Swagger UI, every endpoint with a send button |
 
 The statement endpoint is what makes the append only ledger useful to a person
 rather than only to the code. Its closing balance is computed by summing the
@@ -226,7 +227,59 @@ Approving a held transfer rechecks the funds rather than trusting the check from
 when the hold was placed. Time passes while something sits in a queue, and the
 sender may have spent the money in between. A spec covers exactly that.
 
-## Running it
+## Trying it without cloning anything
+
+The API is deployed, and Swagger UI at `/docs` lists every endpoint with its
+schema and a button that actually sends the request.
+
+Two things to know before you click. The free instance sleeps after fifteen
+minutes, so the first request takes roughly fifty seconds while the container
+starts, and the database wakes alongside it. A request that appears to hang is
+almost always this. Second, the data is public and anyone can write to it, so
+treat it as a sandbox rather than evidence of anything.
+
+The shortest path to seeing the point of the project:
+
+```
+BASE=https://pesabook.onrender.com
+
+# open two accounts
+ALICE=$(curl -s -X POST $BASE/v1/accounts -H 'Content-Type: application/json' \
+  -d '{"reference":"alice-'$RANDOM'","currency":"KES"}' | jq -r .id)
+BOB=$(curl -s -X POST $BASE/v1/accounts -H 'Content-Type: application/json' \
+  -d '{"reference":"bob-'$RANDOM'","currency":"KES"}' | jq -r .id)
+
+# put money into the first one
+curl -s -X POST $BASE/v1/accounts/$ALICE/funding \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: $(uuidgen)" \
+  -d '{"amountMinor":100000,"currency":"KES"}' > /dev/null
+
+# send a payment, keeping the key
+KEY=$(uuidgen)
+curl -s -X POST $BASE/v1/transfers -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $KEY" \
+  -d "{\"sourceAccount\":\"$ALICE\",\"targetAccount\":\"$BOB\",\"amountMinor\":2500,\"currency\":\"KES\"}" \
+  -D - -o /dev/null | grep -i idempotent-replay
+
+# send the very same request again
+curl -s -X POST $BASE/v1/transfers -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $KEY" \
+  -d "{\"sourceAccount\":\"$ALICE\",\"targetAccount\":\"$BOB\",\"amountMinor\":2500,\"currency\":\"KES\"}" \
+  -D - -o /dev/null | grep -i idempotent-replay
+
+# 97500, not 95000
+curl -s $BASE/v1/accounts/$ALICE | jq .balanceMinor
+```
+
+The header reads `Idempotent-Replay: false` the first time and `true` the
+second, and the balance moves once. Change the amount while keeping the key and
+the API returns 422 rather than quietly doing something different from what the
+caller last asked for.
+
+`GET /v1/accounts/{id}/statement` shows the entries behind that balance, which
+is the append only ledger rather than a summary of one.
+
+## Running it locally
 
 ```
 docker compose up --build
@@ -281,17 +334,23 @@ keeps them forever, so the table grows without bound.
 The review queue is unpaginated and unfiltered beyond status. That is fine for a
 queue of tens and wrong for a queue of thousands.
 
-Redis is configured and connected but is not yet load bearing. The claim on a
-key is held in PostgreSQL, which is correct and durable, and a Redis lock in
-front of it would shorten the window in which a losing caller waits. It is wired
-up rather than used, and pretending otherwise would be the kind of claim this
-README is trying to avoid.
+Redis holds a short lived in flight marker for each key, taken before the
+database is touched, so a retry arriving mid flight is turned away without
+spending a round trip on it. It is deliberately only a fast path. A caller it
+lets through still has to win the insert, and when Redis is unreachable the gate
+lets everyone through and PostgreSQL enforces the rule exactly as before. Losing
+the cache costs throughput and cannot make the system wrong, which is the
+property worth protecting when something sits in front of a rule about money.
+Its health indicator is off by default for the same reason: a cache should not
+decide whether an instance is considered live.
 
 The risk thresholds are reasoned rather than fitted. They are configurable
 because the right values depend on the corridor and cannot be derived from
 first principles, and nothing here has been tuned against real fraud data.
 
-## Sources
+The deployed instance has no authentication and its data is public. That is
+fine for something demonstrating ledger and idempotency behaviour and would not
+be fine anywhere else.## Sources
 
 - 2024 FinAccess Household Survey, Central Bank of Kenya, KNBS and FSD Kenya, sections 4.5 and 4.6: https://www.centralbank.go.ke/wp-content/uploads/2024/12/2024-FINACCESS-HOUSEHOLD-SURVEY-MAIN-REPORT.pdf
 - Central Bank of Kenya mobile payments statistics: https://www.centralbank.go.ke/national-payments-system/mobile-payments/
